@@ -1,13 +1,79 @@
 Questions
 
-1. Consider the thread created in start_listener. How many threads with this functionality should be running on the server at any given time?
+1. Consider the thread created in start_listener. 
+How many threads with this functionality should be running on the server at any given time?
 
-2. In the listener function, what do each of the following fields of the sockaddr_in struct represent: sin_family, sin_port, and sin_addr.s_addr?
+    There should only be one thread with the listening functionality becuase when you are 
+    creating new client threads they should not have this functionality becuase they only 
+    want to execute what the client wants them to do. Not listen for new clients.
 
-3. What is the purpose of each of the following function calls in listener: socket, bind, listen, and accept? You should explain what each call does and what the effect would be if it were not called.
+2. In the listener function, what do each of the following fields of the 
+sockaddr_in struct represent: sin_family, sin_port, and sin_addr.s_addr?
 
-4. Which protocol (TCP or UDP) is used for communication? Why is this protocol used? (Hint: see line 35 in comm.c)
+    sin_family: Represents the Internet protocol that is being used. So in start_listener the sin_family
+        is AF_INET which is IPv4.
+    sin_port: Gets the port of the server and converts it from host to network(short). 
+        So in start_listener the sin_port = htons(comm_port);
+    sin_addr.s_addr: stores all the address on the machine becuase a machine might have
+        mutiple address. It stores the "wildcard" address which is all the address on the machine. 
+        In start_listener the sin_addr.s_addr = htonl(INADDR_ANY). htonl means convert from host to network
+        long.
 
-5. Describe what comm_serve does. How are the response and command parameters used? What would happen if the stream pointed to by cxstr were closed?
+3. What is the purpose of each of the following function calls in listener: 
+socket, bind, listen, and accept? You should explain what each call does and 
+what the effect would be if it were not called.
 
-6. Describe, in detail, what happens during each iteration of the while loop in the listener function. Be sure to include explanations of all significant function calls.
+    socket: Sockets are the abstraction of the communication path or a communication endpoing.
+        socket() sets up a socket which is the basis for communication and
+        refers to it using a file descriptor. If this function were not called then
+        there would not be an endpoint fo commuication and the server would not be 
+        able to communicate with another network.
+
+    bind: The bind function binds the file descriptor returned by socket() to the address
+        returned by getaddrinfo(). If the file descriptor is not binded to a an address then
+        there is not a specified place for a server port to be open. Binding to and address
+        defines exactly which interface should have that serve port open. Binding to a
+        specific address makes the server port only visible to the network connected to the local host.
+    
+    listen: The listen function tells the Operating System that the process would like to 
+        receive connections from clients using the indicated socket. The first parameter is a 
+        socket file descriptor, and the second parameter is the maximum number of connections that may 
+        be queued up. If the listner function is not called then the socket will not be able access
+        clients using the indicated socket.
+
+    accept: The accept system call waits if necessary for a connected socket to appear on the
+        the listening socket's queue, then pulls the first such socket from the queue. This socket
+        is the server end of a connection from a client. A file descriptor is returned that refers
+        to that socket, alloding the process to now communicate withe communicate. If accept is not
+        used then the process would not be able to communicate with the client.
+
+4. Which protocol (TCP or UDP) is used for communication? 
+Why is this protocol used? (Hint: see line 35 in comm.c)
+
+    The protocol used for communication is UDP because (AF_INET) over IPv4 means UDP.
+    UDP is a datagram and uses unreliable communication. Therefore it is better and faster than TCP.
+    UDP prioritizes speed over quality becuase sometimes packets are lost. But in Database speed 
+    is important becuase we want to create an efficient program that extracts data from
+    the Database effieciently.
+
+5. Describe what comm_serve does. How are the response and 
+command parameters used? What would happen if the stream pointed to by cxstr were closed?
+
+    comm_serve is in charge of the communication. It writes in the response to the file using fputs(). 
+    Then using fgets(), it reads in the file csxtr specified and stores it in command. The 
+    response and command parameters are used to store characters or messages wanting to be 
+    sent across networks. If the stream pointed to by csxtr were closed then response and
+    command would not have anything to read to or write from, therefore the client connection
+    would be terminated.
+
+
+6. Describe, in detail, what happens during each iteration of 
+the while loop in the listener function. Be sure to include explanations of all 
+significant function calls.
+
+    Each iteration the first function call is accept() which waits to see if there is a client 
+    socket waiting to be connected. If there is, then that socket is pulled and a connection is created.
+    If there is no sockets in the queue the the while loop ends and the function returns NULL. 
+    If a connection has been made then a file is created and using fdopen(csock, "w+") give it 
+    write permission. Then the call to server() establishes a client which has I/O stream pointed to by cxstr. 
+    Then the while loop continues until there is no more sockets left in the queue. 
