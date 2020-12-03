@@ -71,22 +71,29 @@ void *monitor_signal(void *arg);
 void thread_cleanup(void *arg);
 
 void clean_up_pthread_mutex(void *arg) {
+    // error check
     pthread_mutex_unlock((pthread_mutex_t *)arg);
 }
 // Called by client threads to wait until progress is permitted
 void client_control_wait() {
     // TODO: Block the calling thread until the main thread calls
     // client_control_release(). See the client_control_t struct.
-
-    pthread_mutex_lock(&client_control.go_mutex);
-    pthread_cleanup_push(&clean_up_pthread_mutex, &client_control.go_mutex);
-    while (client_control.stopped == 1) {
-        pthread_cond_wait(&client_control.go, &client_control.go_mutex);
+    int err;
+    // lock client control mutex
+    if ((err = pthread_mutex_lock(&client_control.go_mutex)) != 0) {
+        handle_error_en(err, "pthread_mutex_lock");
     }
-
-    pthread_mutex_unlock(&client_control.go_mutex);
-
-    server_active = 0;
+    // push clean up thread mutex handler
+    pthread_cleanup_push(&clean_up_pthread_mutex, &client_control.go_mutex);
+    // wait for client control stopped to == 1
+    while (client_control.stopped == 1) {
+        // waits for the condition variable to change
+        if ((err = pthread_cond_wait(&client_control.go,
+                                     &client_control.go_mutex)) != 0) {
+            handle_error_en(err, "pthread_cond_wait");
+        }
+    }
+    // pop the cleanup handler
     pthread_cleanup_pop(1);
 }
 
@@ -94,22 +101,38 @@ void client_control_wait() {
 void client_control_stop() {
     // TODO: Ensure that the next time client threads call client_control_wait()
     // at the top of the event loop in run_client, they will block.
+
+    int err;
+    // lock client control mutex
+    if ((err = pthread_mutex_lock(&client_control.go_mutex)) != 0) {
+        handle_error_en(err, "pthread_mutex_lock");
+    }
+    // change stopped to 1
     client_control.stopped = 1;
-    pthread_mutex_lock(&client_control.go_mutex);
-    pthread_cond_wait(&client_control.go, &client_control.go_mutex);
-    pthread_mutex_unlock(&client_control.go_mutex);
-    server_active = 0;
+    // unlock client control mutex
+    if ((err = pthread_mutex_unlock(&client_control.go_mutex)) != 0) {
+        handle_error_en(err, "pthread_mutex_unlock");
+    }
 }
 
 // Called by main thread to resume client threads
 void client_control_release() {
     // TODO: Allow clients that are blocked within client_control_wait()
     // to continue. See the client_control_t struct.
-    pthread_mutex_lock(&client_control.go_mutex);
+    // lock client control mutex
+    int err;
+    if ((err = pthread_mutex_lock(&client_control.go_mutex)) != 0) {
+        handle_error_en(err, "pthread_mutex_lock");
+    }
     client_control.stopped = 0;
-    pthread_cond_broadcast(&client_control.go);
-    pthread_mutex_unlock(&client_control.go_mutex);
-    server_active = 1;
+    // broadcast signal
+    if ((err = pthread_cond_broadcast(&client_control.go)) != 0) {
+        handle_error_en(err, "pthread_cond_broadcast");
+    }
+    // unlock client control mutex
+    if ((err = pthread_mutex_unlock(&client_control.go_mutex)) != 0) {
+        handle_error_en(err, "pthread_mutex_unlock");
+    }
 }
 
 // Called by listener (in comm.c) to create a new client thread
@@ -137,18 +160,19 @@ void client_constructor(FILE *cxstr) {
         0) {
         handle_error_en(error, "pthread_create");
     }
-
-    pthread_detach(client->thread);
+    // handle error
+    if ((error = pthread_detach(client->thread)) != 0) {
+        handle_error_en(error, "pthread_detach");
+    }
 }
 
 void client_destructor(client_t *client) {
     // TODO: Free and close all resources associated with a client.
     // Whatever was malloc'd in client_constructor should
     // be freed here!
-
     comm_shutdown(client->cxstr);
-
     free(client);
+    client = NULL;
 }
 
 // Code executed by a client thread
@@ -166,56 +190,59 @@ void *run_client(void *arg) {
 
     // server does not accept clients when recieved stopped signal
     client_t *client = (client_t *)arg;
-    client_t *cur = thread_list_head;
-
+    // client_t *cur = thread_list_head;
+    int err;
     char response[BUFLEN];
     char command[BUFLEN];
-    // memeset buffers to 0
+    // memset buffers to 0
     memset(response, 0, BUFLEN * sizeof(char));
     memset(command, 0, BUFLEN * sizeof(char));
 
-    pthread_mutex_lock(&thread_list_mutex);
     // checks if the server is accpeting new clients
     if (server_active == 0) {
         client_destructor(client);
-        pthread_mutex_unlock(&thread_list_mutex);
-        exit(0);
     } else {
         // adds client to the client list
+        if ((err = pthread_mutex_lock(&thread_list_mutex)) != 0) {
+            handle_error_en(err, "pthread_mutex_lock");
+        }
         if (thread_list_head == NULL) {
             thread_list_head = client;
-            thread_list_head->prev = client;
-            thread_list_head->next = client;
+            thread_list_head->prev = NULL;
+            thread_list_head->next = NULL;
+
         } else {
-            while (cur) {
-                if (cur->next == NULL) {
-                    cur->next = client;
-                    client->prev = cur;
-                    client->next = thread_list_head;
-                } else {
-                    cur = cur->next;
-                }
-            }
+            client->next = thread_list_head;
+            client->prev = NULL;
+            thread_list_head->prev = client;
+            thread_list_head = client;
         }
+        // push thread cleanup if thread has been canceled
+        pthread_cleanup_push(thread_cleanup, client);
+
+        if ((err = pthread_mutex_lock(&server.server_mutex)) != 0) {
+            handle_error_en(err, "pthread_mutex_lock");
+        }
+        server.num_client_threads++;
+
+        if ((err = pthread_mutex_unlock(&server.server_mutex)) != 0) {
+            handle_error_en(err, "pthread_mutex_unlock");
+        }
+        if ((err = pthread_mutex_unlock(&thread_list_mutex)) != 0) {
+            handle_error_en(err, "pthread_mutex_unlock");
+        }
+
+        // loop through comm_serve()
+        while (comm_serve(client->cxstr, response, command) == 0) {
+            // wait on stopped database
+            memset(response, 0, BUFLEN);
+            client_control_wait();
+            interpret_command(command, response, BUFLEN);
+            memset(command, 0, BUFLEN);
+        }
+
+        pthread_cleanup_pop(1);
     }
-    // pthread_mutex_lock(&server.server_mutex);
-    server.num_client_threads++;
-    // pthread_mutex_unlock(&server.server_mutex);
-
-    pthread_mutex_unlock(&thread_list_mutex);
-
-    // push thread cleanup if thread has been canceled
-    pthread_cleanup_push(thread_cleanup, client);
-
-    // loop through comm_serve()
-    while (comm_serve(client->cxstr, response, command)) {
-        // wait on stopped database
-        client_control_wait();
-        interpret_command(command, response, BUFLEN);
-    }
-    printf("client connection terminated\n");
-    pthread_cleanup_pop(1);
-
     return NULL;
 }
 
@@ -224,17 +251,21 @@ void delete_all() {
     // pthread_cancel function.
     client_t *cur = thread_list_head;
     client_t *next;
+    server_active = 0;
     int err;
-    while (cur) {
+    pthread_mutex_lock(&thread_list_mutex);
+    while (cur != NULL) {
         next = cur->next;
 
         if ((err = pthread_cancel(cur->thread)) != 0) {
-            handle_error_en(err, "pthread_cancel");
-            exit(1);
+            handle_error_en(err, "pthread_cancel: hello");
         }
         cur = next;
     }
-    server.num_client_threads = 0;
+    pthread_mutex_unlock(&thread_list_mutex);
+    if (server.num_client_threads == 0) {
+        pthread_cond_broadcast(&server.server_cond);
+    }
 }
 
 // Cleanup routine for client threads, called on cancels and exit.
@@ -243,22 +274,39 @@ void thread_cleanup(void *arg) {
     // client_destructor. This function must be thread safe! The client must
     // be in the list before this routine is ever run.
     client_t *client = (client_t *)arg;
-    client_t *cur = thread_list_head;
-    // if client list is empty
-    if (cur == NULL) {
-        // stop server
-        client_control_stop();
-        server_active = 0;
+    int err;
+
+    if ((client->prev == NULL) && (client->next == NULL)) {
+        thread_list_head = NULL;
     }
-    pthread_mutex_lock(&thread_list_mutex);
+
+    if ((err = pthread_mutex_lock(&thread_list_mutex)) != 0) {
+        handle_error_en(err, "pthread_mutex_lock");
+    }
     client_t *prev = client->prev;
     client_t *next = client->next;
-    prev->next = next;
-    client->prev = NULL;
-    client->next = NULL;
-    client_destructor(client);
+    if ((prev != NULL) && (next != NULL)) {
+        prev->next = next;
+        next->prev = prev;
+    } else if ((prev == NULL) && (next != NULL)) {
+        thread_list_head = next;
+        next->prev = NULL;
+    } else if ((prev != NULL) && (next == NULL)) {
+        prev->next = NULL;
+    }
+    if ((err = pthread_mutex_unlock(&thread_list_mutex)) != 0) {
+        handle_error_en(err, "pthread_mutex_unlock");
+    }
+
+    if ((err = pthread_mutex_lock(&server.server_mutex)) != 0) {
+        handle_error_en(err, "pthread_mutex_lock");
+    }
     server.num_client_threads--;
-    pthread_mutex_unlock(&thread_list_mutex);
+
+    if ((err = pthread_mutex_unlock(&server.server_mutex)) != 0) {
+        handle_error_en(err, "pthread_mutex_unlock");
+    }
+    client_destructor(client);
 }
 
 // Code executed by the signal handler thread. For the purpose of this
@@ -271,16 +319,20 @@ void thread_cleanup(void *arg) {
 void *monitor_signal(void *arg) {
     // TODO: Wait for a SIGINT to be sent to the server process and cancel
     // all client threads when one arrives.
-    sigset_t *sig = (sigset_t *)arg;
-    int *s = 0;
+    sigset_t *sig_set = (sigset_t *)arg;
+    int sig_num;
     int err;
     while (1) {
-        if ((err = sigwait(sig, s)) > 0) {
+        if ((err = sigwait(sig_set, &sig_num)) > 0) {
             fprintf(stderr, "sigwait");
-            exit(0);
+            exit(1);
         }
-        printf("Recived SIGINT, canceling all clients\n");
-        delete_all();
+        if (sig_num == SIGINT) {
+            printf("SIGINT recieved, cancelling all clients\n");
+            delete_all();
+
+            server_active = 1;
+        }
     }
 
     return 0;
@@ -295,13 +347,13 @@ sig_handler_t *sig_handler_constructor() {
         fprintf(stderr, "malloc failed\n");
         exit(1);
     }
+    // error check
     sigemptyset(&sig_handle->set);
     sigaddset(&sig_handle->set, SIGINT);
     int err;
-    if ((err = pthread_create(&sig_handle->thread, 0, monitor_signal,
+    if ((err = pthread_create(&sig_handle->thread, NULL, monitor_signal,
                               (void *)&sig_handle->set)) != 0) {
-        handle_error_en(err, "pthreaed_create");
-        exit(1);
+        handle_error_en(err, "pthread_create");
     }
 
     return sig_handle;
@@ -312,7 +364,7 @@ void sig_handler_destructor(sig_handler_t *sighandler) {
     // Cancel and join with the signal handler's thread.
     int err;
     if ((err = pthread_cancel(sighandler->thread)) != 0) {
-        handle_error_en(err, "pthread_cancel");
+        handle_error_en(err, "pthread_cancel bye");
         exit(1);
     }
     if ((err = pthread_join(sighandler->thread, 0)) != 0) {
@@ -320,6 +372,7 @@ void sig_handler_destructor(sig_handler_t *sighandler) {
         exit(1);
     }
     free(sighandler);
+    sighandler = NULL;
 }
 
 // The arguments to the server should be the port number.
@@ -327,7 +380,8 @@ int main(int argc, char *argv[]) {
     // TODO:
     // Step 1: Set up the signal handler.
     // Step 2: block SIGPIPE so that the server does not abort when a client
-    // disocnnects Step 3: Start a listener thread for clients (see
+    // disocnnects
+    // Step 3: Start a listener thread for clients (see
     // start_listener in
     //       comm.c).
     // Step 4: Loop for command line input and handle accordingly until EOF.
@@ -343,18 +397,25 @@ int main(int argc, char *argv[]) {
     int err;
     server_active = 1;
     char buf[BUFLEN];
+    char *tokens[BUFLEN];
+    char *token;
+    int i = 0;
+
+    // char *file;
+    ssize_t response;
+
     // sig mask list
     sigset_t list;
+    // error check
     sigemptyset(&list);
 
     sigaddset(&list, SIGINT);
+
     // block SIGPIPE and SIGINT
-    signal(SIGPIPE, SIG_IGN);
+    signal(SIGPIPE, SIG_BLOCK);
     if ((err = pthread_sigmask(SIG_BLOCK, &list, 0)) != 0) {
         handle_error_en(err, "pthread_sigmask");
-        exit(1);
     }
-
     // sighandler
     sig_handler_t *sig_handle = sig_handler_constructor();
 
@@ -362,40 +423,70 @@ int main(int argc, char *argv[]) {
     pthread_t listen = start_listener(atoi(argv[1]), client_constructor);
 
     // loop command line until EOF
-    char *read;
-    if ((read = fgets(buf, BUFLEN, stdin)) != NULL) {
-        char file[BUFLEN];
-        if (read != NULL) {
-            if (strcmp(read, "s") == 0) {
+    while (1) {
+        memset(buf, 0, BUFLEN * sizeof(char));
+        memset(tokens, 0, BUFLEN * sizeof(char *));
+        i = 0;
+        char *s = buf;
+        // read the input into buf
+        response = read(0, buf, BUFLEN);
+
+        // if response is less than 0 throw an error
+        if (response < 0) {
+            perror("read");
+            exit(1);
+        }
+        // if response is greater than 0 execute the functions inside
+        if (response > 0) {
+            // null terminate the buffer
+            buf[response] = '\0';
+
+            while ((token = strtok(s, " \t\n")) != NULL) {
+                tokens[i] = token;
+                s = NULL;
+                i++;
+            }
+            if (strcmp(tokens[0], "s") == 0) {
+                printf("stopping all clients\n");
                 client_control_stop();
-            } else if (strcmp(read, "g") == 0) {
+
+            } else if (strcmp(tokens[0], "g") == 0) {
+                printf("releasing all clients\n");
                 client_control_release();
-            } else if (strcmp(read, "p") == 0) {
-                sscanf(&buf[1], "%255s", file);
-                db_print(file);
+
+            } else if (strcmp(tokens[0], "p") == 0) {
+                if ((err = db_print(tokens[1])) == -1) {
+                    fprintf(stderr, "db_print error");
+                    exit(1);
+                }
             }
         }
-    } else {
-        // if EOF
-        // Destroy database, signal handler, all clients,
-        // cancel and join with listener thread
-        printf("exiting database\n");
-        server_active = 0;
-        sig_handler_destructor(sig_handle);
-        delete_all();
-        if (server.num_client_threads == 0) {
+        // if response is 0 that means EOF has happened and return
+        if (response == 0) {
+            printf("exiting database\n");
+            server_active = 0;
+            sig_handler_destructor(sig_handle);
+            delete_all();
+            if ((err = pthread_mutex_lock(&server.server_mutex)) != 0) {
+                handle_error_en(err, "pthread_mutex_lock");
+            }
+            pthread_cleanup_push(clean_up_pthread_mutex, &server.server_mutex);
+            while (server.num_client_threads != 0) {
+                pthread_cond_wait(&server.server_cond, &server.server_mutex);
+            }
+            pthread_cleanup_pop(1);
+
             db_cleanup();
             if ((err = pthread_cancel(listen)) != 0) {
-                handle_error_en(err, "pthread_cancel");
+                handle_error_en(err, "pthread_cancel hi");
                 exit(1);
             }
             if ((err = pthread_join(listen, NULL)) != 0) {
                 handle_error_en(err, "pthread_join");
                 exit(1);
             }
+            return 0;
         }
-        return 0;
     }
-
     return 0;
 }

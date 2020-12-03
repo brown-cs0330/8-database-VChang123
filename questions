@@ -3,10 +3,11 @@ Questions
 1. Consider the thread created in start_listener. 
 How many threads with this functionality should be running on the server at any given time?
 
-    There should only be one thread with the listening functionality becuase when you are 
-    creating new client threads they should not have this functionality becuase they only 
-    want to execute what the client wants them to do. Not listen for new clients.
-
+    There should only be one thread with the listening functionality becuase that one thread will listen
+    for clients and when it detects a client, it will create a client thread for it and then detach it to run
+    the clients actions. We do not need more than one listener thread becuase one thread would be enough 
+    to create all the client threads.
+   
 2. In the listener function, what do each of the following fields of the 
 sockaddr_in struct represent: sin_family, sin_port, and sin_addr.s_addr?
 
@@ -26,13 +27,12 @@ what the effect would be if it were not called.
     socket: Sockets are the abstraction of the communication path or a communication endpoing.
         socket() sets up a socket which is the basis for communication and
         refers to it using a file descriptor. If this function were not called then
-        there would not be an endpoint fo commuication and the server would not be 
+        there would not be an endpoint of commuication and the server would not be 
         able to communicate with another network.
 
     bind: The bind function binds the file descriptor returned by socket() to the address
-        returned by getaddrinfo(). If the file descriptor is not binded to a an address then
-        there is not a specified place for a server port to be open. Binding to and address
-        defines exactly which interface should have that serve port open. Binding to a
+        of our machine. If the file descriptor is not binded to a an address then
+        there is not a specified place for a server port to be open. Binding to a
         specific address makes the server port only visible to the network connected to the local host.
     
     listen: The listen function tells the Operating System that the process would like to 
@@ -50,18 +50,21 @@ what the effect would be if it were not called.
 4. Which protocol (TCP or UDP) is used for communication? 
 Why is this protocol used? (Hint: see line 35 in comm.c)
 
-    The protocol used for communication is UDP because (AF_INET) over IPv4 means UDP.
-    UDP is a datagram and uses unreliable communication. Therefore it is better and faster than TCP.
-    UDP prioritizes speed over quality becuase sometimes packets are lost. But in Database speed 
-    is important becuase we want to create an efficient program that extracts data from
-    the Database effieciently.
+    The protocol used for communication is TCP because SOCK_STREAM is TCP. TCP is used 
+    becuase it is reliable transmission and UDP is unreliable transmission. TCP is
+    also a better a choice for a database because it guarantees the integrity of data. 
+    Because we are creating a database we want all of our data to be intact and TCP ensures
+    that.
+
+
 
 5. Describe what comm_serve does. How are the response and 
 command parameters used? What would happen if the stream pointed to by cxstr were closed?
 
     comm_serve is in charge of the communication. It writes in the response to the file using fputs(). 
-    Then using fgets(), it reads in the file csxtr specified and stores it in command. The 
-    response and command parameters are used to store characters or messages wanting to be 
+    Then using fgets() if there is a response available, 
+    it reads in the file csxtr specified and stores it in command. If there is not a response
+    then we get a command from the file. The response and command parameters are used to store characters or messages wanting to be 
     sent across networks. If the stream pointed to by csxtr were closed then response and
     command would not have anything to read to or write from, therefore the client connection
     would be terminated.
@@ -71,9 +74,8 @@ command parameters used? What would happen if the stream pointed to by cxstr wer
 the while loop in the listener function. Be sure to include explanations of all 
 significant function calls.
 
-    Each iteration the first function call is accept() which waits to see if there is a client 
+    In each iteration the first function call is accept() which waits to see if there is a client 
     socket waiting to be connected. If there is, then that socket is pulled and a connection is created.
-    If there is no sockets in the queue the the while loop ends and the function returns NULL. 
+    If there is no sockets in the queue we wait for more sockets. 
     If a connection has been made then a file is created and using fdopen(csock, "w+") give it 
     write permission. Then the call to server() establishes a client which has I/O stream pointed to by cxstr. 
-    Then the while loop continues until there is no more sockets left in the queue. 

@@ -1,5 +1,5 @@
 cc = gcc
-ccflags = -g -I. -std=gnu99 -Wall -pthread
+ccflags = -g -I. -std=gnu99 -Wall -pthread 
 
 all: server client
 
