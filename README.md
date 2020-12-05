@@ -1,1 +1,16 @@
 # 8-database
+STRUCTURE OF PROGRAMS:
+
+SERVER: 
+    The structure of the server is created in the main function. First all the necessary variables are created and the server_active boolean is set to one because the server is active. Then the signals are handled. SIGPIPE is ignored and a signal handler is instantiated. The signal_constructor creates a thread that handles SIGINT using the function monitor_signal. In the signal_constructor function, SIGINT is first masked of then the thread is created that calls monitor_signal. Monitor_signal waits for the SIGINT signal and then when it receives the signal it does following actions: deletes all the client threads and then switches the server back to active. Then main calls the start_listener function which creates a thread that listens for clients that want to join the server. This start_listner function takes in the client_constructor. The client_constructor creates a thread to service the clients actions by using run_client where the client commands are handled. Then comes the command line input. Using read to get the input, it is parsed using strtok and then depending on the command used a different function is called. If the input is s, the client_control_stop() is called. If the input is g, client_control_release() is called. If the command is p, then db_print is called. Then the final part of the server is if the command line recieved EOF or control-D. This means the database is shutting down. Therefore, everything needs to be removed. All the clients are removed, the signalhandler is destroyed, and then db_shutdown is called, then the listener thread is canceled and joined. 
+
+DB.C:
+    db_query: In db_query, the head is locked before calling search. Then if the target is found, the target is then unlocked.
+
+    db_add: in db_add, the head is locked before calling search. Then if the target is not found, the targer and the parent are unlocked. Otherwise, the target is created and then the parent is unlocked.
+
+    db_remove: in db_remove, the head is locked before calling search. Then if the dnode is not found, the parent is unlocked. Otherwise if either the node has no left child or if the node has no right child, the parent is unlocked and the dnode is unlocked. Then if it is neither of those two cases, then we try and find the smallest node in the right subtree. Before the while loop, the next node is locked. Then inside the while loop, the nodes left child is locked. Then before going to the next iteration of the while loop the next is unlocked. Then outside the while loop, the parent, dnode, and next are all unlocked. 
+
+    db_search: a locktyp enum was created for this function. Then a static inline void function called locked was created in order to choose to use a rdlock or wrlock. Then the lock() function was called if there exist a child. Then the parent is unlocked right before the recursive call. Then at the very end, if the parentpp is null, then the parent it unlocked again.
+
+    db_print_recurs: The node is locked as it recurses through the tree, then unlocks them as it returns.
