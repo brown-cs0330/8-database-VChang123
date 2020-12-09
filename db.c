@@ -14,6 +14,10 @@
 // freed (it's allocated in the data region).
 node_t head = {"", "", 0, 0, PTHREAD_RWLOCK_INITIALIZER};
 
+/*
+This helper method locks the rwlock of a node using the specified
+locktype
+*/
 static inline void lock(enum locktype lt, pthread_rwlock_t *lk) {
     int err;
     if (lt == l_read) {
@@ -78,6 +82,7 @@ void node_destructor(node_t *node) {
 void db_query(char *name, char *result, int len) {
     int err;
     node_t *target;
+    // lock the head
     if ((err = pthread_rwlock_rdlock(&head.rwl)) != 0) {
         handle_error_en(err, "pthread_rwlock_rdlock");
     }
@@ -89,6 +94,7 @@ void db_query(char *name, char *result, int len) {
         return;
     } else {
         snprintf(result, len, "%s", target->value);
+        // unlock the target
         if ((err = pthread_rwlock_unlock(&target->rwl)) != 0) {
             handle_error_en(err, "pthread_rwlock_unlock");
         }
@@ -103,14 +109,17 @@ int db_add(char *name, char *value) {
     node_t *target;
     node_t *newnode;
     int err;
+    // lock the head before search
     if ((err = pthread_rwlock_wrlock(&head.rwl)) != 0) {
         handle_error_en(err, "pthread_rwlock_wrlock");
     }
 
     if ((target = search(name, &head, &parent, l_write)) != 0) {
+        // unlock the target is not found
         if ((err = pthread_rwlock_unlock(&target->rwl)) != 0) {
             handle_error_en(err, "pthread_rwlock_unlock");
         }
+        // unlock the parent
         if ((err = pthread_rwlock_unlock(&parent->rwl)) != 0) {
             handle_error_en(err, "pthread_rwlock_unlock");
         }
@@ -124,7 +133,7 @@ int db_add(char *name, char *value) {
         parent->lchild = newnode;
     else
         parent->rchild = newnode;
-
+    // unlock the parent
     if ((err = pthread_rwlock_unlock(&parent->rwl)) != 0) {
         handle_error_en(err, "pthread_rwlock_unlock");
     }
@@ -133,7 +142,6 @@ int db_add(char *name, char *value) {
 }
 
 int db_remove(char *name) {
-    // TODO: Make this thread-safe!
     node_t *parent;
     node_t *dnode;
     node_t *next;
@@ -146,6 +154,7 @@ int db_remove(char *name) {
     // first, find the node to be removed
     if ((dnode = search(name, &head, &parent, l_write)) == 0) {
         // it's not there
+        // unlock the parent
         if ((err = pthread_rwlock_unlock(&parent->rwl)) != 0) {
             handle_error_en(err, "pthread_rwlock_unlock");
         }
@@ -162,10 +171,11 @@ int db_remove(char *name) {
             parent->lchild = dnode->lchild;
         else
             parent->rchild = dnode->lchild;
-
+        // unlock the parent
         if ((err = pthread_rwlock_unlock(&parent->rwl)) != 0) {
             handle_error_en(err, "pthread_rwlock_unlock");
         }
+        // unlock the node to be deleted
         if ((err = pthread_rwlock_unlock(&dnode->rwl)) != 0) {
             handle_error_en(err, "pthread_rwlock_unlock");
         }
@@ -180,9 +190,11 @@ int db_remove(char *name) {
         else
             parent->rchild = dnode->rchild;
 
+        // unlock the parent
         if ((err = pthread_rwlock_unlock(&parent->rwl)) != 0) {
             handle_error_en(err, "pthread_rwlock_unlock");
         }
+        // unlock the node to be deleted
         if ((err = pthread_rwlock_unlock(&dnode->rwl)) != 0) {
             handle_error_en(err, "pthread_rwlock_unlock");
         }
@@ -196,18 +208,20 @@ int db_remove(char *name) {
 
         next = dnode->rchild;
         node_t **pnext = &dnode->rchild;
-
+        // lock the right child of the node to be deleted
         if ((err = pthread_rwlock_wrlock(&next->rwl)) != 0) {
             handle_error_en(err, "pthread_rwlock_wrlock");
         }
         while (next->lchild != 0) {
             // work our way down the lchild chain, finding the smallest node
             // in the subtree.
+            // lock the left child
             if ((err = pthread_rwlock_wrlock(&next->lchild->rwl)) != 0) {
                 handle_error_en(err, "pthread_rwlock_wrlock");
             }
             node_t *nextl = next->lchild;
             pnext = &next->lchild;
+            // unlock the next before moving to the next iteration
             if ((err = pthread_rwlock_unlock(&next->rwl)) != 0) {
                 handle_error_en(err, "pthread_rwlock_unlock");
             }
@@ -220,13 +234,15 @@ int db_remove(char *name) {
         snprintf(dnode->name, MAXLEN, "%s", next->name);
         snprintf(dnode->value, MAXLEN, "%s", next->value);
         *pnext = next->rchild;
-
+        // unlock the next
         if ((err = pthread_rwlock_unlock(&next->rwl)) != 0) {
             handle_error_en(err, "pthread_rwlock_unlock");
         }
+        // unlock the node to be deleted
         if ((err = pthread_rwlock_unlock(&dnode->rwl)) != 0) {
             handle_error_en(err, "pthread_rwlock_unlock");
         }
+        // unlock the parent
         if ((err = pthread_rwlock_unlock(&parent->rwl)) != 0) {
             handle_error_en(err, "pthread_rwlock_unlock");
         }
@@ -247,7 +263,6 @@ node_t *search(char *name, node_t *parent, node_t **parentpp,
     // by parentpp is set to what would be the the address of the parent of
     // the target node, if it were there.
     //
-    // TODO: Make this thread-safe!
 
     node_t *next;
     node_t *result;
@@ -262,10 +277,12 @@ node_t *search(char *name, node_t *parent, node_t **parentpp,
     if (next == NULL) {
         result = NULL;
     } else {
+        // lock the next node
         lock(lt, &next->rwl);
         if (strcmp(name, next->name) == 0) {
             result = next;
         } else {
+            // unlock the parent
             if ((err = pthread_rwlock_unlock(&parent->rwl)) != 0) {
                 handle_error_en(err, "pthread_rwlock_unlock");
             }
@@ -276,6 +293,7 @@ node_t *search(char *name, node_t *parent, node_t **parentpp,
     if (parentpp != NULL) {
         *parentpp = parent;
     } else {
+        // unlock the parent
         if ((err = pthread_rwlock_unlock(&parent->rwl)) != 0) {
             handle_error_en(err, "pthread_rwlock_unlock");
         }
@@ -291,7 +309,6 @@ static inline void print_spaces(int lvl, FILE *out) {
 
 /* helper function for db_print */
 void db_print_recurs(node_t *node, int lvl, FILE *out) {
-    // TODO: Make this thread-safe!
     // print spaces to differentiate levels
     print_spaces(lvl, out);
     int err;

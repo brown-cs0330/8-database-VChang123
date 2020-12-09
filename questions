@@ -4,19 +4,23 @@ Questions
 How many threads with this functionality should be running on the server at any given time?
 
     There should only be one thread with the listening functionality becuase that one thread will listen
-    for clients and when it detects a client, it will create a client thread for it and then detach it to run
-    the clients actions. We do not need more than one listener thread becuase one thread would be enough 
+    for clients and when it detects a client, it will create a client thread for it using the 
+    client_constructor function and then detach it to run the clients actions. 
+    We do not need more than one listener thread becuase one thread would be enough 
     to create all the client threads.
    
 2. In the listener function, what do each of the following fields of the 
 sockaddr_in struct represent: sin_family, sin_port, and sin_addr.s_addr?
 
-    sin_family: Represents the Internet protocol that is being used. So in start_listener the sin_family
+    sin_family: Represents the communication domain the addresses are in. So in start_listener the sin_family
         is AF_INET which is IPv4.
-    sin_port: Gets the port of the server and converts it from host to network(short). 
+    sin_port: Gets the port of the server and converts it from host to network(short). The server
+        will run a port number and the client will run the same port number to be able to interact
+        withe each other. comm_port is the port that is determined by the input to the server.
         So in start_listener the sin_port = htons(comm_port);
     sin_addr.s_addr: stores all the address on the machine becuase a machine might have
-        mutiple address. It stores the "wildcard" address which is all the address on the machine. 
+        mutiple address. It stores the "wildcard" address which is all the address on the machine 
+        so we may be abloe to receive on all interfaces. 
         In start_listener the sin_addr.s_addr = htonl(INADDR_ANY). htonl means convert from host to network
         long.
 
@@ -54,20 +58,20 @@ Why is this protocol used? (Hint: see line 35 in comm.c)
     becuase it is reliable transmission and UDP is unreliable transmission. TCP is
     also a better a choice for a database because it guarantees the integrity of data. 
     Because we are creating a database we want all of our data to be intact and TCP ensures
-    that.
+    that. UDP is an unreliable becuase it may or may not lose dats during transmission
+    which makes it not optimal for a database.
 
 
 
 5. Describe what comm_serve does. How are the response and 
 command parameters used? What would happen if the stream pointed to by cxstr were closed?
 
-    comm_serve is in charge of the communication. It writes in the response to the file using fputs(). 
-    Then using fgets() if there is a response available, 
-    it reads in the file csxtr specified and stores it in command. If there is not a response
-    then we get a command from the file. The response and command parameters are used to store characters or messages wanting to be 
-    sent across networks. If the stream pointed to by csxtr were closed then response and
-    command would not have anything to read to or write from, therefore the client connection
-    would be terminated.
+    comm_serve is in charge of the communication. It first checks if there is anything in
+    the response buffer. If there is a response, then that means there is an output from
+    the server that needs to be sent to the client, so by using fputs(), we can write to the cxstr
+    file. If there is nothing in the response buffer, then fgets() is called to see if 
+    there is a command avaible to excute. If the stream pointed to by cxstr is closed that means there
+    is no file to write to and the connection with the client will be terminated.
 
 
 6. Describe, in detail, what happens during each iteration of 
@@ -75,7 +79,11 @@ the while loop in the listener function. Be sure to include explanations of all
 significant function calls.
 
     In each iteration the first function call is accept() which waits to see if there is a client 
-    socket waiting to be connected. If there is, then that socket is pulled and a connection is created.
-    If there is no sockets in the queue we wait for more sockets. 
-    If a connection has been made then a file is created and using fdopen(csock, "w+") give it 
-    write permission. Then the call to server() establishes a client which has I/O stream pointed to by cxstr. 
+    socket waiting to be connected. If there is, then that socket is pulledfrom the queue
+    and a connection is created, returning a file descriptor that can be used to communicate to the client.
+    If accept() has failed, then we move onto the next iteration of the while loop. If accept()
+    is successful, we open the file stream using fdopen(), giving it read and write permission. 
+    If the file exist we will use that, otherwise it will be created. If fopen() fails, the socket
+    will be closed and we move onto the next interation of the while loop.
+    Then the call to server() establishes a client which has I/O stream pointed to by cxstr. Then
+    we can move onto the next iteration.
