@@ -295,7 +295,7 @@ void thread_cleanup(void *arg) {
         client_t *next = client->next;
         // if the client is somewhere in the middle of the list
         if ((prev != NULL) && (next != NULL)) {
-            // set the pointers accordinger
+            // set the pointers accordingly
             prev->next = next;
             next->prev = prev;
         }
@@ -358,7 +358,10 @@ void *monitor_signal(void *arg) {
         // if the signal is SIGINT
         if (sig_num == SIGINT) {
             // delete all clients
-            printf("SIGINT recieved, cancelling all clients\n");
+            if((err = printf("SIGINT recieved, cancelling all clients\n")) < 0){
+                fprintf(stderr, "printf failed");
+                exit(1);
+            }
             delete_all();
             // lock the thread list mutex
             if ((err = pthread_mutex_lock(&thread_list_mutex)) != 0) {
@@ -530,7 +533,10 @@ int main(int argc, char *argv[]) {
                 handle_error_en(err, "pthread_join");
                 exit(1);
             }
-            printf("exiting database\n");
+            if((err = printf("exiting database\n")) < 0){
+                fprintf(stderr, "printf failed");
+                exit(1);
+            }
             return 0;
         }
     }
