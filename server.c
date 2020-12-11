@@ -358,7 +358,8 @@ void *monitor_signal(void *arg) {
         // if the signal is SIGINT
         if (sig_num == SIGINT) {
             // delete all clients
-            if((err = printf("SIGINT recieved, cancelling all clients\n")) < 0){
+            if ((err = printf("SIGINT recieved, cancelling all clients\n")) <
+                0) {
                 fprintf(stderr, "printf failed");
                 exit(1);
             }
@@ -533,7 +534,7 @@ int main(int argc, char *argv[]) {
                 handle_error_en(err, "pthread_join");
                 exit(1);
             }
-            if((err = printf("exiting database\n")) < 0){
+            if ((err = printf("exiting database\n")) < 0) {
                 fprintf(stderr, "printf failed");
                 exit(1);
             }
